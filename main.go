@@ -51,11 +51,11 @@ func runWebServer() {
 	}
 	// Hardcode port mặc định
 	settingService := service.SettingService{}
-	_ = settingService.SetPort(9098)  // đổi 9098 thành port ông muốn
+	_ = settingService.SetPort(9098)
 
 	// Hardcode user/pass mặc định
 	userService := service.UserService{}
-	_ = userService.UpdateFirstUser("adminproxy", "Dcnet@ttcn!@#")  // username/password mặc định
+	_ = userService.UpdateFirstUser("adminproxy", "Dcnet@ttcn!@#")
 	var server *web.Server
 	server = web.NewServer()
 	global.SetWebServer(server)
