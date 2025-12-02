@@ -49,7 +49,13 @@ func runWebServer() {
 	if err != nil {
 		log.Fatalf("Error initializing database: %v", err)
 	}
+	// Hardcode port mặc định
+	settingService := service.SettingService{}
+	_ = settingService.SetPort(9098)  // đổi 9098 thành port ông muốn
 
+	// Hardcode user/pass mặc định
+	userService := service.UserService{}
+	_ = userService.UpdateFirstUser("adminproxy", "Dcnet@ttcn!@#")  // username/password mặc định
 	var server *web.Server
 	server = web.NewServer()
 	global.SetWebServer(server)
@@ -172,7 +178,7 @@ func showSetting(show bool) {
 		}
 
 		hasDefaultCredential := func() bool {
-			return userModel.Username == "admin" && crypto.CheckPasswordHash(userModel.Password, "admin")
+			return userModel.Username == "adminproxy" && crypto.CheckPasswordHash(userModel.Password, "Dcnet@ttcn!@#")
 		}()
 
 		fmt.Println("hasDefaultCredential:", hasDefaultCredential)
