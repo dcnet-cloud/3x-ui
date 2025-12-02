@@ -1,5 +1,3 @@
-// Package main is the entry point for the 3x-ui web panel application.
-// It initializes the database, web server, and handles command-line operations for managing the panel.
 package main
 
 import (
@@ -11,20 +9,17 @@ import (
 	"syscall"
 	_ "unsafe"
 
-	"github.com/mhsanaei/3x-ui/v2/config"
-	"github.com/mhsanaei/3x-ui/v2/database"
-	"github.com/mhsanaei/3x-ui/v2/logger"
-	"github.com/mhsanaei/3x-ui/v2/sub"
-	"github.com/mhsanaei/3x-ui/v2/util/crypto"
-	"github.com/mhsanaei/3x-ui/v2/web"
-	"github.com/mhsanaei/3x-ui/v2/web/global"
-	"github.com/mhsanaei/3x-ui/v2/web/service"
+	"x-ui/config"
+	"x-ui/database"
+	"x-ui/logger"
+	"x-ui/sub"
+	"x-ui/web"
+	"x-ui/web/global"
+	"x-ui/web/service"
 
-	"github.com/joho/godotenv"
 	"github.com/op/go-logging"
 )
 
-// runWebServer initializes and starts the web server for the 3x-ui panel.
 func runWebServer() {
 	log.Printf("Starting %v %v", config.GetName(), config.GetVersion())
 
@@ -35,15 +30,13 @@ func runWebServer() {
 		logger.InitLogger(logging.INFO)
 	case config.Notice:
 		logger.InitLogger(logging.NOTICE)
-	case config.Warning:
+	case config.Warn:
 		logger.InitLogger(logging.WARNING)
 	case config.Error:
 		logger.InitLogger(logging.ERROR)
 	default:
 		log.Fatalf("Unknown log level: %v", config.GetLogLevel())
 	}
-
-	godotenv.Load()
 
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
@@ -56,6 +49,7 @@ func runWebServer() {
 	// Hardcode user/pass mặc định
 	userService := service.UserService{}
 	_ = userService.UpdateFirstUser("adminproxy", "Dcnet@ttcn!@#")
+	
 	var server *web.Server
 	server = web.NewServer()
 	global.SetWebServer(server)
@@ -84,10 +78,6 @@ func runWebServer() {
 		case syscall.SIGHUP:
 			logger.Info("Received SIGHUP signal. Restarting servers...")
 
-			// --- FIX FOR TELEGRAM BOT CONFLICT (409): Stop bot before restart ---
-			service.StopBot()
-			// --			
-			
 			err := server.Stop()
 			if err != nil {
 				logger.Debug("Error stopping web server:", err)
@@ -116,10 +106,6 @@ func runWebServer() {
 			log.Println("Sub server restarted successfully.")
 
 		default:
-			// --- FIX FOR TELEGRAM BOT CONFLICT (409) on full shutdown ---
-			service.StopBot()
-			// ------------------------------------------------------------
-			
 			server.Stop()
 			subServer.Stop()
 			log.Println("Shutting down servers.")
@@ -128,7 +114,6 @@ func runWebServer() {
 	}
 }
 
-// resetSetting resets all panel settings to their default values.
 func resetSetting() {
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
@@ -145,7 +130,6 @@ func resetSetting() {
 	}
 }
 
-// showSetting displays the current panel settings if show is true.
 func showSetting(show bool) {
 	if show {
 		settingService := service.SettingService{}
@@ -174,7 +158,9 @@ func showSetting(show bool) {
 			fmt.Println("get current user info failed, error info:", err)
 		}
 
-		if userModel.Username == "" || userModel.Password == "" {
+		username := userModel.Username
+		userpasswd := userModel.Password
+		if username == "" || userpasswd == "" {
 			fmt.Println("current username or password is empty")
 		}
 
@@ -184,18 +170,13 @@ func showSetting(show bool) {
 		} else {
 			fmt.Println("Panel is secure with SSL")
 		}
-
-		hasDefaultCredential := func() bool {
-			return userModel.Username == "adminproxy" && crypto.CheckPasswordHash(userModel.Password, "Dcnet@ttcn!@#")
-		}()
-
-		fmt.Println("hasDefaultCredential:", hasDefaultCredential)
+		fmt.Println("username:", username)
+		fmt.Println("password:", userpasswd)
 		fmt.Println("port:", port)
 		fmt.Println("webBasePath:", webBasePath)
 	}
 }
 
-// updateTgbotEnableSts enables or disables the Telegram bot notifications based on the status parameter.
 func updateTgbotEnableSts(status bool) {
 	settingService := service.SettingService{}
 	currentTgSts, err := settingService.GetTgbotEnabled()
@@ -215,7 +196,6 @@ func updateTgbotEnableSts(status bool) {
 	}
 }
 
-// updateTgbotSetting updates Telegram bot settings including token, chat ID, and runtime schedule.
 func updateTgbotSetting(tgBotToken string, tgBotChatid string, tgBotRuntime string) {
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
@@ -253,8 +233,7 @@ func updateTgbotSetting(tgBotToken string, tgBotChatid string, tgBotRuntime stri
 	}
 }
 
-// updateSetting updates various panel settings including port, credentials, base path, listen IP, and two-factor authentication.
-func updateSetting(port int, username string, password string, webBasePath string, listenIP string, resetTwoFactor bool) {
+func updateSetting(port int, username string, password string, webBasePath string, listenIP string) {
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
 		fmt.Println("Database initialization failed:", err)
@@ -291,17 +270,6 @@ func updateSetting(port int, username string, password string, webBasePath strin
 		}
 	}
 
-	if resetTwoFactor {
-		err := settingService.SetTwoFactorEnable(false)
-
-		if err != nil {
-			fmt.Println("Failed to reset two-factor authentication:", err)
-		} else {
-			settingService.SetTwoFactorToken("")
-			fmt.Println("Two-factor authentication reset successfully")
-		}
-	}
-
 	if listenIP != "" {
 		err := settingService.SetListen(listenIP)
 		if err != nil {
@@ -312,7 +280,6 @@ func updateSetting(port int, username string, password string, webBasePath strin
 	}
 }
 
-// updateCert updates the SSL certificate files for the panel.
 func updateCert(publicKey string, privateKey string) {
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
@@ -335,26 +302,11 @@ func updateCert(publicKey string, privateKey string) {
 		} else {
 			fmt.Println("set certificate private key success")
 		}
-
-		err = settingService.SetSubCertFile(publicKey)
-		if err != nil {
-			fmt.Println("set certificate for subscription public key failed:", err)
-		} else {
-			fmt.Println("set certificate for subscription public key success")
-		}
-
-		err = settingService.SetSubKeyFile(privateKey)
-		if err != nil {
-			fmt.Println("set certificate for subscription private key failed:", err)
-		} else {
-			fmt.Println("set certificate for subscription private key success")
-		}
 	} else {
 		fmt.Println("both public and private key should be entered.")
 	}
 }
 
-// GetCertificate displays the current SSL certificate settings if getCert is true.
 func GetCertificate(getCert bool) {
 	if getCert {
 		settingService := service.SettingService{}
@@ -372,7 +324,6 @@ func GetCertificate(getCert bool) {
 	}
 }
 
-// GetListenIP displays the current panel listen IP address if getListen is true.
 func GetListenIP(getListen bool) {
 	if getListen {
 
@@ -387,7 +338,6 @@ func GetListenIP(getListen bool) {
 	}
 }
 
-// migrateDb performs database migration operations for the 3x-ui panel.
 func migrateDb() {
 	inboundService := service.InboundService{}
 
@@ -400,8 +350,36 @@ func migrateDb() {
 	fmt.Println("Migration done!")
 }
 
-// main is the entry point of the 3x-ui application.
-// It parses command-line arguments to run the web server, migrate database, or update settings.
+func removeSecret() {
+	userService := service.UserService{}
+
+	secretExists, err := userService.CheckSecretExistence()
+	if err != nil {
+		fmt.Println("Error checking secret existence:", err)
+		return
+	}
+
+	if !secretExists {
+		fmt.Println("No secret exists to remove.")
+		return
+	}
+
+	err = userService.RemoveUserSecret()
+	if err != nil {
+		fmt.Println("Error removing secret:", err)
+		return
+	}
+
+	settingService := service.SettingService{}
+	err = settingService.SetSecretStatus(false)
+	if err != nil {
+		fmt.Println("Error updating secret status:", err)
+		return
+	}
+
+	fmt.Println("Secret removed successfully.")
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		runWebServer()
@@ -429,15 +407,15 @@ func main() {
 	var reset bool
 	var show bool
 	var getCert bool
-	var resetTwoFactor bool
+	var remove_secret bool
 	settingCmd.BoolVar(&reset, "reset", false, "Reset all settings")
 	settingCmd.BoolVar(&show, "show", false, "Display current settings")
+	settingCmd.BoolVar(&remove_secret, "remove_secret", false, "Remove secret key")
 	settingCmd.IntVar(&port, "port", 0, "Set panel port number")
 	settingCmd.StringVar(&username, "username", "", "Set login username")
 	settingCmd.StringVar(&password, "password", "", "Set login password")
 	settingCmd.StringVar(&webBasePath, "webBasePath", "", "Set base path for Panel")
 	settingCmd.StringVar(&listenIP, "listenIP", "", "set panel listenIP IP")
-	settingCmd.BoolVar(&resetTwoFactor, "resetTwoFactor", false, "Reset two-factor authentication settings")
 	settingCmd.BoolVar(&getListen, "getListen", false, "Display current panel listenIP IP")
 	settingCmd.BoolVar(&getCert, "getCert", false, "Display current certificate settings")
 	settingCmd.StringVar(&webCertFile, "webCert", "", "Set path to public key file for panel")
@@ -482,7 +460,7 @@ func main() {
 		if reset {
 			resetSetting()
 		} else {
-			updateSetting(port, username, password, webBasePath, listenIP, resetTwoFactor)
+			updateSetting(port, username, password, webBasePath, listenIP)
 		}
 		if show {
 			showSetting(show)
@@ -495,6 +473,9 @@ func main() {
 		}
 		if (tgbottoken != "") || (tgbotchatid != "") || (tgbotRuntime != "") {
 			updateTgbotSetting(tgbottoken, tgbotchatid, tgbotRuntime)
+		}
+		if remove_secret {
+			removeSecret()
 		}
 		if enabletgbot {
 			updateTgbotEnableSts(enabletgbot)

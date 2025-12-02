@@ -7,13 +7,10 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/mhsanaei/3x-ui/v2/logger"
-	"github.com/mhsanaei/3x-ui/v2/util/common"
+	"x-ui/logger"
+	"x-ui/util/common"
 )
 
-// WarpService provides business logic for Cloudflare WARP integration.
-// It manages WARP configuration and connectivity settings.
 type WarpService struct {
 	SettingService
 }
@@ -59,7 +56,8 @@ func (s *WarpService) GetWarpConfig() (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	buffer := &bytes.Buffer{}
+	buffer := bytes.NewBuffer(make([]byte, 8192))
+	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
 	if err != nil {
 		return "", err
@@ -89,13 +87,14 @@ func (s *WarpService) RegWarp(secretKey string, publicKey string) (string, error
 		return "", err
 	}
 	defer resp.Body.Close()
-	buffer := &bytes.Buffer{}
+	buffer := bytes.NewBuffer(make([]byte, 8192))
+	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	var rspData map[string]any
+	var rspData map[string]interface{}
 	err = json.Unmarshal(buffer.Bytes(), &rspData)
 	if err != nil {
 		return "", err
@@ -103,7 +102,7 @@ func (s *WarpService) RegWarp(secretKey string, publicKey string) (string, error
 
 	deviceId := rspData["id"].(string)
 	token := rspData["token"].(string)
-	license, ok := rspData["account"].(map[string]any)["license"].(string)
+	license, ok := rspData["account"].(map[string]interface{})["license"].(string)
 	if !ok {
 		logger.Debug("Error accessing license value.")
 		return "", err
@@ -145,20 +144,21 @@ func (s *WarpService) SetWarpLicense(license string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	buffer := &bytes.Buffer{}
+	buffer := bytes.NewBuffer(make([]byte, 8192))
+	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	var response map[string]any
+	var response map[string]interface{}
 	err = json.Unmarshal(buffer.Bytes(), &response)
 	if err != nil {
 		return "", err
 	}
 	if response["success"] == false {
-		errorArr, _ := response["errors"].([]any)
-		errorObj := errorArr[0].(map[string]any)
+		errorArr, _ := response["errors"].([]interface{})
+		errorObj := errorArr[0].(map[string]interface{})
 		return "", common.NewError(errorObj["code"], errorObj["message"])
 	}
 

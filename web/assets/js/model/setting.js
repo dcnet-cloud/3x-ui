@@ -7,8 +7,8 @@ class AllSetting {
         this.webCertFile = "";
         this.webKeyFile = "";
         this.webBasePath = "/";
-        this.sessionMaxAge = 360;
-        this.pageSize = 25;
+        this.sessionMaxAge = 60;
+        this.pageSize = 50;
         this.expireDiff = 0;
         this.trafficDiff = 0;
         this.remarkModel = "-ieo";
@@ -23,12 +23,9 @@ class AllSetting {
         this.tgBotLoginNotify = true;
         this.tgCpu = 80;
         this.tgLang = "en-US";
-        this.twoFactorEnable = false;
-        this.twoFactorToken = "";
         this.xrayTemplateConfig = "";
-        this.subEnable = true;
-        this.subJsonEnable = false;
-        this.subTitle = "";
+        this.secretEnable = false;
+        this.subEnable = false;
         this.subListen = "";
         this.subPort = 2096;
         this.subPath = "/sub/";
@@ -49,28 +46,6 @@ class AllSetting {
         this.subJsonRules = "";
 
         this.timeLocation = "Local";
-
-        // LDAP settings
-        this.ldapEnable = false;
-        this.ldapHost = "";
-        this.ldapPort = 389;
-        this.ldapUseTLS = false;
-        this.ldapBindDN = "";
-        this.ldapPassword = "";
-        this.ldapBaseDN = "";
-        this.ldapUserFilter = "(objectClass=person)";
-        this.ldapUserAttr = "mail";
-        this.ldapVlessField = "vless_enabled";
-        this.ldapSyncCron = "@every 1m";
-        this.ldapFlagField = "";
-        this.ldapTruthyValues = "true,1,yes,on";
-        this.ldapInvertFlag = false;
-        this.ldapInboundTags = "";
-        this.ldapAutoCreate = false;
-        this.ldapAutoDelete = false;
-        this.ldapDefaultTotalGB = 0;
-        this.ldapDefaultExpiryDays = 0;
-        this.ldapDefaultLimitIP = 0;
 
         if (data == null) {
             return

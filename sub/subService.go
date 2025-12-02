@@ -3,24 +3,21 @@ package sub
 import (
 	"encoding/base64"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/goccy/go-json"
+	"x-ui/database"
+	"x-ui/database/model"
+	"x-ui/logger"
+	"x-ui/util/common"
+	"x-ui/util/random"
+	"x-ui/web/service"
+	"x-ui/xray"
 
-	"github.com/mhsanaei/3x-ui/v2/database"
-	"github.com/mhsanaei/3x-ui/v2/database/model"
-	"github.com/mhsanaei/3x-ui/v2/logger"
-	"github.com/mhsanaei/3x-ui/v2/util/common"
-	"github.com/mhsanaei/3x-ui/v2/util/random"
-	"github.com/mhsanaei/3x-ui/v2/web/service"
-	"github.com/mhsanaei/3x-ui/v2/xray"
+	"github.com/goccy/go-json"
 )
 
-// SubService provides business logic for generating subscription links and managing subscription data.
 type SubService struct {
 	address        string
 	showInfo       bool
@@ -30,7 +27,6 @@ type SubService struct {
 	settingService service.SettingService
 }
 
-// NewSubService creates a new subscription service with the given configuration.
 func NewSubService(showInfo bool, remarkModel string) *SubService {
 	return &SubService{
 		showInfo:    showInfo,
@@ -38,20 +34,19 @@ func NewSubService(showInfo bool, remarkModel string) *SubService {
 	}
 }
 
-// GetSubs retrieves subscription links for a given subscription ID and host.
-func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.ClientTraffic, error) {
+func (s *SubService) GetSubs(subId string, host string) ([]string, string, error) {
 	s.address = host
 	var result []string
+	var header string
 	var traffic xray.ClientTraffic
-	var lastOnline int64
 	var clientTraffics []xray.ClientTraffic
 	inbounds, err := s.getInboundsBySubId(subId)
 	if err != nil {
-		return nil, 0, traffic, err
+		return nil, "", err
 	}
 
 	if len(inbounds) == 0 {
-		return nil, 0, traffic, common.NewError("No inbounds found with ", subId)
+		return nil, "", common.NewError("No inbounds found with ", subId)
 	}
 
 	s.datepicker, err = s.settingService.GetDatepicker()
@@ -78,11 +73,7 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.C
 			if client.Enable && client.SubID == subId {
 				link := s.getLink(inbound, client.Email)
 				result = append(result, link)
-				ct := s.getClientTraffics(inbound.ClientStats, client.Email)
-				clientTraffics = append(clientTraffics, ct)
-				if ct.LastOnline > lastOnline {
-					lastOnline = ct.LastOnline
-				}
+				clientTraffics = append(clientTraffics, s.getClientTraffics(inbound.ClientStats, client.Email))
 			}
 		}
 	}
@@ -109,7 +100,8 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.C
 			}
 		}
 	}
-	return result, lastOnline, traffic, nil
+	header = fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d", traffic.Up, traffic.Down, traffic.Total, traffic.ExpiryTime/1000)
+	return result, header, nil
 }
 
 func (s *SubService) getInboundsBySubId(subId string) ([]*model.Inbound, error) {
@@ -149,9 +141,9 @@ func (s *SubService) getFallbackMaster(dest string, streamSettings string) (stri
 		return "", 0, "", err
 	}
 
-	var stream map[string]any
+	var stream map[string]interface{}
 	json.Unmarshal([]byte(streamSettings), &stream)
-	var masterStream map[string]any
+	var masterStream map[string]interface{}
 	json.Unmarshal([]byte(inbound.StreamSettings), &masterStream)
 	stream["security"] = masterStream["security"]
 	stream["tlsSettings"] = masterStream["tlsSettings"]
@@ -179,66 +171,66 @@ func (s *SubService) genVmessLink(inbound *model.Inbound, email string) string {
 	if inbound.Protocol != model.VMESS {
 		return ""
 	}
-	obj := map[string]any{
+	obj := map[string]interface{}{
 		"v":    "2",
 		"add":  s.address,
 		"port": inbound.Port,
 		"type": "none",
 	}
-	var stream map[string]any
+	var stream map[string]interface{}
 	json.Unmarshal([]byte(inbound.StreamSettings), &stream)
 	network, _ := stream["network"].(string)
 	obj["net"] = network
 	switch network {
 	case "tcp":
-		tcp, _ := stream["tcpSettings"].(map[string]any)
-		header, _ := tcp["header"].(map[string]any)
+		tcp, _ := stream["tcpSettings"].(map[string]interface{})
+		header, _ := tcp["header"].(map[string]interface{})
 		typeStr, _ := header["type"].(string)
 		obj["type"] = typeStr
 		if typeStr == "http" {
-			request := header["request"].(map[string]any)
-			requestPath, _ := request["path"].([]any)
+			request := header["request"].(map[string]interface{})
+			requestPath, _ := request["path"].([]interface{})
 			obj["path"] = requestPath[0].(string)
-			headers, _ := request["headers"].(map[string]any)
+			headers, _ := request["headers"].(map[string]interface{})
 			obj["host"] = searchHost(headers)
 		}
 	case "kcp":
-		kcp, _ := stream["kcpSettings"].(map[string]any)
-		header, _ := kcp["header"].(map[string]any)
+		kcp, _ := stream["kcpSettings"].(map[string]interface{})
+		header, _ := kcp["header"].(map[string]interface{})
 		obj["type"], _ = header["type"].(string)
 		obj["path"], _ = kcp["seed"].(string)
 	case "ws":
-		ws, _ := stream["wsSettings"].(map[string]any)
+		ws, _ := stream["wsSettings"].(map[string]interface{})
 		obj["path"] = ws["path"].(string)
 		if host, ok := ws["host"].(string); ok && len(host) > 0 {
 			obj["host"] = host
 		} else {
-			headers, _ := ws["headers"].(map[string]any)
+			headers, _ := ws["headers"].(map[string]interface{})
 			obj["host"] = searchHost(headers)
 		}
 	case "grpc":
-		grpc, _ := stream["grpcSettings"].(map[string]any)
+		grpc, _ := stream["grpcSettings"].(map[string]interface{})
 		obj["path"] = grpc["serviceName"].(string)
 		obj["authority"] = grpc["authority"].(string)
 		if grpc["multiMode"].(bool) {
 			obj["type"] = "multi"
 		}
 	case "httpupgrade":
-		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]any)
+		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]interface{})
 		obj["path"] = httpupgrade["path"].(string)
 		if host, ok := httpupgrade["host"].(string); ok && len(host) > 0 {
 			obj["host"] = host
 		} else {
-			headers, _ := httpupgrade["headers"].(map[string]any)
+			headers, _ := httpupgrade["headers"].(map[string]interface{})
 			obj["host"] = searchHost(headers)
 		}
 	case "xhttp":
-		xhttp, _ := stream["xhttpSettings"].(map[string]any)
+		xhttp, _ := stream["xhttpSettings"].(map[string]interface{})
 		obj["path"] = xhttp["path"].(string)
 		if host, ok := xhttp["host"].(string); ok && len(host) > 0 {
 			obj["host"] = host
 		} else {
-			headers, _ := xhttp["headers"].(map[string]any)
+			headers, _ := xhttp["headers"].(map[string]interface{})
 			obj["host"] = searchHost(headers)
 		}
 		obj["mode"] = xhttp["mode"].(string)
@@ -246,8 +238,8 @@ func (s *SubService) genVmessLink(inbound *model.Inbound, email string) string {
 	security, _ := stream["security"].(string)
 	obj["tls"] = security
 	if security == "tls" {
-		tlsSetting, _ := stream["tlsSettings"].(map[string]any)
-		alpns, _ := tlsSetting["alpn"].([]any)
+		tlsSetting, _ := stream["tlsSettings"].(map[string]interface{})
+		alpns, _ := tlsSetting["alpn"].([]interface{})
 		if len(alpns) > 0 {
 			var alpn []string
 			for _, a := range alpns {
@@ -281,14 +273,14 @@ func (s *SubService) genVmessLink(inbound *model.Inbound, email string) string {
 	obj["id"] = clients[clientIndex].ID
 	obj["scy"] = clients[clientIndex].Security
 
-	externalProxies, _ := stream["externalProxy"].([]any)
+	externalProxies, _ := stream["externalProxy"].([]interface{})
 
 	if len(externalProxies) > 0 {
 		links := ""
 		for index, externalProxy := range externalProxies {
-			ep, _ := externalProxy.(map[string]any)
+			ep, _ := externalProxy.(map[string]interface{})
 			newSecurity, _ := ep["forceTls"].(string)
-			newObj := map[string]any{}
+			newObj := map[string]interface{}{}
 			for key, value := range obj {
 				if !(newSecurity == "none" && (key == "alpn" || key == "sni" || key == "fp" || key == "allowInsecure")) {
 					newObj[key] = value
@@ -321,7 +313,7 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 	if inbound.Protocol != model.VLESS {
 		return ""
 	}
-	var stream map[string]any
+	var stream map[string]interface{}
 	json.Unmarshal([]byte(inbound.StreamSettings), &stream)
 	clients, _ := s.inboundService.GetClients(inbound)
 	clientIndex := -1
@@ -337,63 +329,56 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 	params := make(map[string]string)
 	params["type"] = streamNetwork
 
-	// Add encryption parameter for VLESS from inbound settings
-	var settings map[string]any
-	json.Unmarshal([]byte(inbound.Settings), &settings)
-	if encryption, ok := settings["encryption"].(string); ok {
-		params["encryption"] = encryption
-	}
-
 	switch streamNetwork {
 	case "tcp":
-		tcp, _ := stream["tcpSettings"].(map[string]any)
-		header, _ := tcp["header"].(map[string]any)
+		tcp, _ := stream["tcpSettings"].(map[string]interface{})
+		header, _ := tcp["header"].(map[string]interface{})
 		typeStr, _ := header["type"].(string)
 		if typeStr == "http" {
-			request := header["request"].(map[string]any)
-			requestPath, _ := request["path"].([]any)
+			request := header["request"].(map[string]interface{})
+			requestPath, _ := request["path"].([]interface{})
 			params["path"] = requestPath[0].(string)
-			headers, _ := request["headers"].(map[string]any)
+			headers, _ := request["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 			params["headerType"] = "http"
 		}
 	case "kcp":
-		kcp, _ := stream["kcpSettings"].(map[string]any)
-		header, _ := kcp["header"].(map[string]any)
+		kcp, _ := stream["kcpSettings"].(map[string]interface{})
+		header, _ := kcp["header"].(map[string]interface{})
 		params["headerType"] = header["type"].(string)
 		params["seed"] = kcp["seed"].(string)
 	case "ws":
-		ws, _ := stream["wsSettings"].(map[string]any)
+		ws, _ := stream["wsSettings"].(map[string]interface{})
 		params["path"] = ws["path"].(string)
 		if host, ok := ws["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := ws["headers"].(map[string]any)
+			headers, _ := ws["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "grpc":
-		grpc, _ := stream["grpcSettings"].(map[string]any)
+		grpc, _ := stream["grpcSettings"].(map[string]interface{})
 		params["serviceName"] = grpc["serviceName"].(string)
 		params["authority"], _ = grpc["authority"].(string)
 		if grpc["multiMode"].(bool) {
 			params["mode"] = "multi"
 		}
 	case "httpupgrade":
-		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]any)
+		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]interface{})
 		params["path"] = httpupgrade["path"].(string)
 		if host, ok := httpupgrade["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := httpupgrade["headers"].(map[string]any)
+			headers, _ := httpupgrade["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "xhttp":
-		xhttp, _ := stream["xhttpSettings"].(map[string]any)
+		xhttp, _ := stream["xhttpSettings"].(map[string]interface{})
 		params["path"] = xhttp["path"].(string)
 		if host, ok := xhttp["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := xhttp["headers"].(map[string]any)
+			headers, _ := xhttp["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 		params["mode"] = xhttp["mode"].(string)
@@ -401,8 +386,8 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 	security, _ := stream["security"].(string)
 	if security == "tls" {
 		params["security"] = "tls"
-		tlsSetting, _ := stream["tlsSettings"].(map[string]any)
-		alpns, _ := tlsSetting["alpn"].([]any)
+		tlsSetting, _ := stream["tlsSettings"].(map[string]interface{})
+		alpns, _ := tlsSetting["alpn"].([]interface{})
 		var alpn []string
 		for _, a := range alpns {
 			alpn = append(alpn, a.(string))
@@ -433,28 +418,23 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 
 	if security == "reality" {
 		params["security"] = "reality"
-		realitySetting, _ := stream["realitySettings"].(map[string]any)
+		realitySetting, _ := stream["realitySettings"].(map[string]interface{})
 		realitySettings, _ := searchKey(realitySetting, "settings")
 		if realitySetting != nil {
 			if sniValue, ok := searchKey(realitySetting, "serverNames"); ok {
-				sNames, _ := sniValue.([]any)
+				sNames, _ := sniValue.([]interface{})
 				params["sni"] = sNames[random.Num(len(sNames))].(string)
 			}
 			if pbkValue, ok := searchKey(realitySettings, "publicKey"); ok {
 				params["pbk"], _ = pbkValue.(string)
 			}
 			if sidValue, ok := searchKey(realitySetting, "shortIds"); ok {
-				shortIds, _ := sidValue.([]any)
+				shortIds, _ := sidValue.([]interface{})
 				params["sid"] = shortIds[random.Num(len(shortIds))].(string)
 			}
 			if fpValue, ok := searchKey(realitySettings, "fingerprint"); ok {
 				if fp, ok := fpValue.(string); ok && len(fp) > 0 {
 					params["fp"] = fp
-				}
-			}
-			if pqvValue, ok := searchKey(realitySettings, "mldsa65Verify"); ok {
-				if pqv, ok := pqvValue.(string); ok && len(pqv) > 0 {
-					params["pqv"] = pqv
 				}
 			}
 			params["spx"] = "/" + random.Seq(15)
@@ -469,12 +449,12 @@ func (s *SubService) genVlessLink(inbound *model.Inbound, email string) string {
 		params["security"] = "none"
 	}
 
-	externalProxies, _ := stream["externalProxy"].([]any)
+	externalProxies, _ := stream["externalProxy"].([]interface{})
 
 	if len(externalProxies) > 0 {
 		links := ""
 		for index, externalProxy := range externalProxies {
-			ep, _ := externalProxy.(map[string]any)
+			ep, _ := externalProxy.(map[string]interface{})
 			newSecurity, _ := ep["forceTls"].(string)
 			dest, _ := ep["dest"].(string)
 			port := int(ep["port"].(float64))
@@ -527,7 +507,7 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 	if inbound.Protocol != model.Trojan {
 		return ""
 	}
-	var stream map[string]any
+	var stream map[string]interface{}
 	json.Unmarshal([]byte(inbound.StreamSettings), &stream)
 	clients, _ := s.inboundService.GetClients(inbound)
 	clientIndex := -1
@@ -545,54 +525,54 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 
 	switch streamNetwork {
 	case "tcp":
-		tcp, _ := stream["tcpSettings"].(map[string]any)
-		header, _ := tcp["header"].(map[string]any)
+		tcp, _ := stream["tcpSettings"].(map[string]interface{})
+		header, _ := tcp["header"].(map[string]interface{})
 		typeStr, _ := header["type"].(string)
 		if typeStr == "http" {
-			request := header["request"].(map[string]any)
-			requestPath, _ := request["path"].([]any)
+			request := header["request"].(map[string]interface{})
+			requestPath, _ := request["path"].([]interface{})
 			params["path"] = requestPath[0].(string)
-			headers, _ := request["headers"].(map[string]any)
+			headers, _ := request["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 			params["headerType"] = "http"
 		}
 	case "kcp":
-		kcp, _ := stream["kcpSettings"].(map[string]any)
-		header, _ := kcp["header"].(map[string]any)
+		kcp, _ := stream["kcpSettings"].(map[string]interface{})
+		header, _ := kcp["header"].(map[string]interface{})
 		params["headerType"] = header["type"].(string)
 		params["seed"] = kcp["seed"].(string)
 	case "ws":
-		ws, _ := stream["wsSettings"].(map[string]any)
+		ws, _ := stream["wsSettings"].(map[string]interface{})
 		params["path"] = ws["path"].(string)
 		if host, ok := ws["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := ws["headers"].(map[string]any)
+			headers, _ := ws["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "grpc":
-		grpc, _ := stream["grpcSettings"].(map[string]any)
+		grpc, _ := stream["grpcSettings"].(map[string]interface{})
 		params["serviceName"] = grpc["serviceName"].(string)
 		params["authority"], _ = grpc["authority"].(string)
 		if grpc["multiMode"].(bool) {
 			params["mode"] = "multi"
 		}
 	case "httpupgrade":
-		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]any)
+		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]interface{})
 		params["path"] = httpupgrade["path"].(string)
 		if host, ok := httpupgrade["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := httpupgrade["headers"].(map[string]any)
+			headers, _ := httpupgrade["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "xhttp":
-		xhttp, _ := stream["xhttpSettings"].(map[string]any)
+		xhttp, _ := stream["xhttpSettings"].(map[string]interface{})
 		params["path"] = xhttp["path"].(string)
 		if host, ok := xhttp["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := xhttp["headers"].(map[string]any)
+			headers, _ := xhttp["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 		params["mode"] = xhttp["mode"].(string)
@@ -600,8 +580,8 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 	security, _ := stream["security"].(string)
 	if security == "tls" {
 		params["security"] = "tls"
-		tlsSetting, _ := stream["tlsSettings"].(map[string]any)
-		alpns, _ := tlsSetting["alpn"].([]any)
+		tlsSetting, _ := stream["tlsSettings"].(map[string]interface{})
+		alpns, _ := tlsSetting["alpn"].([]interface{})
 		var alpn []string
 		for _, a := range alpns {
 			alpn = append(alpn, a.(string))
@@ -628,28 +608,23 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 
 	if security == "reality" {
 		params["security"] = "reality"
-		realitySetting, _ := stream["realitySettings"].(map[string]any)
+		realitySetting, _ := stream["realitySettings"].(map[string]interface{})
 		realitySettings, _ := searchKey(realitySetting, "settings")
 		if realitySetting != nil {
 			if sniValue, ok := searchKey(realitySetting, "serverNames"); ok {
-				sNames, _ := sniValue.([]any)
+				sNames, _ := sniValue.([]interface{})
 				params["sni"] = sNames[random.Num(len(sNames))].(string)
 			}
 			if pbkValue, ok := searchKey(realitySettings, "publicKey"); ok {
 				params["pbk"], _ = pbkValue.(string)
 			}
 			if sidValue, ok := searchKey(realitySetting, "shortIds"); ok {
-				shortIds, _ := sidValue.([]any)
+				shortIds, _ := sidValue.([]interface{})
 				params["sid"] = shortIds[random.Num(len(shortIds))].(string)
 			}
 			if fpValue, ok := searchKey(realitySettings, "fingerprint"); ok {
 				if fp, ok := fpValue.(string); ok && len(fp) > 0 {
 					params["fp"] = fp
-				}
-			}
-			if pqvValue, ok := searchKey(realitySettings, "mldsa65Verify"); ok {
-				if pqv, ok := pqvValue.(string); ok && len(pqv) > 0 {
-					params["pqv"] = pqv
 				}
 			}
 			params["spx"] = "/" + random.Seq(15)
@@ -664,12 +639,12 @@ func (s *SubService) genTrojanLink(inbound *model.Inbound, email string) string 
 		params["security"] = "none"
 	}
 
-	externalProxies, _ := stream["externalProxy"].([]any)
+	externalProxies, _ := stream["externalProxy"].([]interface{})
 
 	if len(externalProxies) > 0 {
 		links := ""
 		for index, externalProxy := range externalProxies {
-			ep, _ := externalProxy.(map[string]any)
+			ep, _ := externalProxy.(map[string]interface{})
 			newSecurity, _ := ep["forceTls"].(string)
 			dest, _ := ep["dest"].(string)
 			port := int(ep["port"].(float64))
@@ -723,11 +698,11 @@ func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string) st
 	if inbound.Protocol != model.Shadowsocks {
 		return ""
 	}
-	var stream map[string]any
+	var stream map[string]interface{}
 	json.Unmarshal([]byte(inbound.StreamSettings), &stream)
 	clients, _ := s.inboundService.GetClients(inbound)
 
-	var settings map[string]any
+	var settings map[string]interface{}
 	json.Unmarshal([]byte(inbound.Settings), &settings)
 	inboundPassword := settings["password"].(string)
 	method := settings["method"].(string)
@@ -744,54 +719,54 @@ func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string) st
 
 	switch streamNetwork {
 	case "tcp":
-		tcp, _ := stream["tcpSettings"].(map[string]any)
-		header, _ := tcp["header"].(map[string]any)
+		tcp, _ := stream["tcpSettings"].(map[string]interface{})
+		header, _ := tcp["header"].(map[string]interface{})
 		typeStr, _ := header["type"].(string)
 		if typeStr == "http" {
-			request := header["request"].(map[string]any)
-			requestPath, _ := request["path"].([]any)
+			request := header["request"].(map[string]interface{})
+			requestPath, _ := request["path"].([]interface{})
 			params["path"] = requestPath[0].(string)
-			headers, _ := request["headers"].(map[string]any)
+			headers, _ := request["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 			params["headerType"] = "http"
 		}
 	case "kcp":
-		kcp, _ := stream["kcpSettings"].(map[string]any)
-		header, _ := kcp["header"].(map[string]any)
+		kcp, _ := stream["kcpSettings"].(map[string]interface{})
+		header, _ := kcp["header"].(map[string]interface{})
 		params["headerType"] = header["type"].(string)
 		params["seed"] = kcp["seed"].(string)
 	case "ws":
-		ws, _ := stream["wsSettings"].(map[string]any)
+		ws, _ := stream["wsSettings"].(map[string]interface{})
 		params["path"] = ws["path"].(string)
 		if host, ok := ws["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := ws["headers"].(map[string]any)
+			headers, _ := ws["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "grpc":
-		grpc, _ := stream["grpcSettings"].(map[string]any)
+		grpc, _ := stream["grpcSettings"].(map[string]interface{})
 		params["serviceName"] = grpc["serviceName"].(string)
 		params["authority"], _ = grpc["authority"].(string)
 		if grpc["multiMode"].(bool) {
 			params["mode"] = "multi"
 		}
 	case "httpupgrade":
-		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]any)
+		httpupgrade, _ := stream["httpupgradeSettings"].(map[string]interface{})
 		params["path"] = httpupgrade["path"].(string)
 		if host, ok := httpupgrade["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := httpupgrade["headers"].(map[string]any)
+			headers, _ := httpupgrade["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 	case "xhttp":
-		xhttp, _ := stream["xhttpSettings"].(map[string]any)
+		xhttp, _ := stream["xhttpSettings"].(map[string]interface{})
 		params["path"] = xhttp["path"].(string)
 		if host, ok := xhttp["host"].(string); ok && len(host) > 0 {
 			params["host"] = host
 		} else {
-			headers, _ := xhttp["headers"].(map[string]any)
+			headers, _ := xhttp["headers"].(map[string]interface{})
 			params["host"] = searchHost(headers)
 		}
 		params["mode"] = xhttp["mode"].(string)
@@ -800,8 +775,8 @@ func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string) st
 	security, _ := stream["security"].(string)
 	if security == "tls" {
 		params["security"] = "tls"
-		tlsSetting, _ := stream["tlsSettings"].(map[string]any)
-		alpns, _ := tlsSetting["alpn"].([]any)
+		tlsSetting, _ := stream["tlsSettings"].(map[string]interface{})
+		alpns, _ := tlsSetting["alpn"].([]interface{})
 		var alpn []string
 		for _, a := range alpns {
 			alpn = append(alpn, a.(string))
@@ -831,12 +806,12 @@ func (s *SubService) genShadowsocksLink(inbound *model.Inbound, email string) st
 		encPart = fmt.Sprintf("%s:%s:%s", method, inboundPassword, clients[clientIndex].Password)
 	}
 
-	externalProxies, _ := stream["externalProxy"].([]any)
+	externalProxies, _ := stream["externalProxy"].([]interface{})
 
 	if len(externalProxies) > 0 {
 		links := ""
 		for index, externalProxy := range externalProxies {
-			ep, _ := externalProxy.(map[string]any)
+			ep, _ := externalProxy.(map[string]interface{})
 			newSecurity, _ := ep["forceTls"].(string)
 			dest, _ := ep["dest"].(string)
 			port := int(ep["port"].(float64))
@@ -969,9 +944,9 @@ func (s *SubService) genRemark(inbound *model.Inbound, email string, extra strin
 	return strings.Join(remark, separationChar)
 }
 
-func searchKey(data any, key string) (any, bool) {
+func searchKey(data interface{}, key string) (interface{}, bool) {
 	switch val := data.(type) {
-	case map[string]any:
+	case map[string]interface{}:
 		for k, v := range val {
 			if k == key {
 				return v, true
@@ -980,7 +955,7 @@ func searchKey(data any, key string) (any, bool) {
 				return result, true
 			}
 		}
-	case []any:
+	case []interface{}:
 		for _, v := range val {
 			if result, ok := searchKey(v, key); ok {
 				return result, true
@@ -990,209 +965,23 @@ func searchKey(data any, key string) (any, bool) {
 	return nil, false
 }
 
-func searchHost(headers any) string {
-	data, _ := headers.(map[string]any)
+func searchHost(headers interface{}) string {
+	data, _ := headers.(map[string]interface{})
 	for k, v := range data {
 		if strings.EqualFold(k, "host") {
 			switch v.(type) {
-			case []any:
-				hosts, _ := v.([]any)
+			case []interface{}:
+				hosts, _ := v.([]interface{})
 				if len(hosts) > 0 {
 					return hosts[0].(string)
 				} else {
 					return ""
 				}
-			case any:
+			case interface{}:
 				return v.(string)
 			}
 		}
 	}
 
 	return ""
-}
-
-// PageData is a view model for subpage.html
-// PageData contains data for rendering the subscription information page.
-type PageData struct {
-	Host         string
-	BasePath     string
-	SId          string
-	Download     string
-	Upload       string
-	Total        string
-	Used         string
-	Remained     string
-	Expire       int64
-	LastOnline   int64
-	Datepicker   string
-	DownloadByte int64
-	UploadByte   int64
-	TotalByte    int64
-	SubUrl       string
-	SubJsonUrl   string
-	Result       []string
-}
-
-// ResolveRequest extracts scheme and host info from request/headers consistently.
-// ResolveRequest extracts scheme, host, and header information from an HTTP request.
-func (s *SubService) ResolveRequest(c *gin.Context) (scheme string, host string, hostWithPort string, hostHeader string) {
-	// scheme
-	scheme = "http"
-	if c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
-		scheme = "https"
-	}
-
-	// base host (no port)
-	if h, err := getHostFromXFH(c.GetHeader("X-Forwarded-Host")); err == nil && h != "" {
-		host = h
-	}
-	if host == "" {
-		host = c.GetHeader("X-Real-IP")
-	}
-	if host == "" {
-		var err error
-		host, _, err = net.SplitHostPort(c.Request.Host)
-		if err != nil {
-			host = c.Request.Host
-		}
-	}
-
-	// host:port for URLs
-	hostWithPort = c.GetHeader("X-Forwarded-Host")
-	if hostWithPort == "" {
-		hostWithPort = c.Request.Host
-	}
-	if hostWithPort == "" {
-		hostWithPort = host
-	}
-
-	// header display host
-	hostHeader = c.GetHeader("X-Forwarded-Host")
-	if hostHeader == "" {
-		hostHeader = c.GetHeader("X-Real-IP")
-	}
-	if hostHeader == "" {
-		hostHeader = host
-	}
-	return
-}
-
-// BuildURLs constructs absolute subscription and JSON subscription URLs for a given subscription ID.
-// It prioritizes configured URIs, then individual settings, and finally falls back to request-derived components.
-func (s *SubService) BuildURLs(scheme, hostWithPort, subPath, subJsonPath, subId string) (subURL, subJsonURL string) {
-	// Input validation
-	if subId == "" {
-		return "", ""
-	}
-
-	// Get configured URIs first (highest priority)
-	configuredSubURI, _ := s.settingService.GetSubURI()
-	configuredSubJsonURI, _ := s.settingService.GetSubJsonURI()
-
-	// Determine base scheme and host (cached to avoid duplicate calls)
-	var baseScheme, baseHostWithPort string
-	if configuredSubURI == "" || configuredSubJsonURI == "" {
-		baseScheme, baseHostWithPort = s.getBaseSchemeAndHost(scheme, hostWithPort)
-	}
-
-	// Build subscription URL
-	subURL = s.buildSingleURL(configuredSubURI, baseScheme, baseHostWithPort, subPath, subId)
-
-	// Build JSON subscription URL
-	subJsonURL = s.buildSingleURL(configuredSubJsonURI, baseScheme, baseHostWithPort, subJsonPath, subId)
-
-	return subURL, subJsonURL
-}
-
-// getBaseSchemeAndHost determines the base scheme and host from settings or falls back to request values
-func (s *SubService) getBaseSchemeAndHost(requestScheme, requestHostWithPort string) (string, string) {
-	subDomain, err := s.settingService.GetSubDomain()
-	if err != nil || subDomain == "" {
-		return requestScheme, requestHostWithPort
-	}
-
-	// Get port and TLS settings
-	subPort, _ := s.settingService.GetSubPort()
-	subKeyFile, _ := s.settingService.GetSubKeyFile()
-	subCertFile, _ := s.settingService.GetSubCertFile()
-
-	// Determine scheme from TLS configuration
-	scheme := "http"
-	if subKeyFile != "" && subCertFile != "" {
-		scheme = "https"
-	}
-
-	// Build host:port, always include port for clarity
-	hostWithPort := fmt.Sprintf("%s:%d", subDomain, subPort)
-
-	return scheme, hostWithPort
-}
-
-// buildSingleURL constructs a single URL using configured URI or base components
-func (s *SubService) buildSingleURL(configuredURI, baseScheme, baseHostWithPort, basePath, subId string) string {
-	if configuredURI != "" {
-		return s.joinPathWithID(configuredURI, subId)
-	}
-
-	baseURL := fmt.Sprintf("%s://%s", baseScheme, baseHostWithPort)
-	return s.joinPathWithID(baseURL+basePath, subId)
-}
-
-// joinPathWithID safely joins a base path with a subscription ID
-func (s *SubService) joinPathWithID(basePath, subId string) string {
-	if strings.HasSuffix(basePath, "/") {
-		return basePath + subId
-	}
-	return basePath + "/" + subId
-}
-
-// BuildPageData parses header and prepares the template view model.
-// BuildPageData constructs page data for rendering the subscription information page.
-func (s *SubService) BuildPageData(subId string, hostHeader string, traffic xray.ClientTraffic, lastOnline int64, subs []string, subURL, subJsonURL string, basePath string) PageData {
-	download := common.FormatTraffic(traffic.Down)
-	upload := common.FormatTraffic(traffic.Up)
-	total := "∞"
-	used := common.FormatTraffic(traffic.Up + traffic.Down)
-	remained := ""
-	if traffic.Total > 0 {
-		total = common.FormatTraffic(traffic.Total)
-		left := max(traffic.Total-(traffic.Up+traffic.Down), 0)
-		remained = common.FormatTraffic(left)
-	}
-
-	datepicker := s.datepicker
-	if datepicker == "" {
-		datepicker = "gregorian"
-	}
-
-	return PageData{
-		Host:         hostHeader,
-		BasePath:     basePath,
-		SId:          subId,
-		Download:     download,
-		Upload:       upload,
-		Total:        total,
-		Used:         used,
-		Remained:     remained,
-		Expire:       traffic.ExpiryTime / 1000,
-		LastOnline:   lastOnline,
-		Datepicker:   datepicker,
-		DownloadByte: traffic.Down,
-		UploadByte:   traffic.Up,
-		TotalByte:    traffic.Total,
-		SubUrl:       subURL,
-		SubJsonUrl:   subJsonURL,
-		Result:       subs,
-	}
-}
-
-func getHostFromXFH(s string) (string, error) {
-	if strings.Contains(s, ":") {
-		realHost, _, err := net.SplitHostPort(s)
-		if err != nil {
-			return "", err
-		}
-		return realHost, nil
-	}
-	return s, nil
 }

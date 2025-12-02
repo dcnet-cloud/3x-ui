@@ -1,7 +1,7 @@
 # ========================================================
 # Stage: Builder
 # ========================================================
-FROM golang:1.25-alpine AS builder
+FROM golang:1.24-alpine AS builder
 WORKDIR /app
 ARG TARGETARCH
 
@@ -22,7 +22,7 @@ RUN ./DockerInit.sh "$TARGETARCH"
 # Stage: Final Image of 3x-ui
 # ========================================================
 FROM alpine
-ENV TZ=Asia/Tehran
+ENV TZ=Asia/Ho_Chi_Minh
 WORKDIR /app
 
 RUN apk add --no-cache --update \
@@ -48,7 +48,7 @@ RUN chmod +x \
   /app/x-ui \
   /usr/bin/x-ui
 
-ENV XUI_ENABLE_FAIL2BAN="true"
+ENV X_UI_ENABLE_FAIL2BAN="true"
 EXPOSE 9098
 VOLUME [ "/etc/x-ui" ]
 CMD [ "./x-ui" ]
